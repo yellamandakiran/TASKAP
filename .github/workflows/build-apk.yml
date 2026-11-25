@@ -39,12 +39,19 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Extract TaskTick project
+        - name: Extract TaskTick project
         run: |
-          mkdir source
-          unzip TaskTickAndroid_Project.zip -d source
+          mkdir -p source
+          ZIP_FILE="$(find . -maxdepth 3 -type f -iname 'TaskTickAndroid_Project*.zip' | head -n 1)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "TaskTick project ZIP not found. Repository files:"
+            find . -maxdepth 3 -type f
+            exit 1
+          fi
+          echo "Extracting: $ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d source
           ls -la source
-
+     
       - name: Build TaskTick APK
         run: gradle --no-daemon -p source :app:assembleDebug
 
