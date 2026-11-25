@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'TaskTickAndroid_Project.zip'
+      - '**.zip'
       - '.github/workflows/build-apk.yml'
 
 jobs:
@@ -39,25 +39,68 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
 
-        - name: Extract TaskTick project
+      - name: Find and extract TaskTick project
+        shell: bash
         run: |
-          mkdir -p source
-          ZIP_FILE="$(find . -maxdepth 3 -type f -iname 'TaskTickAndroid_Project*.zip' | head -n 1)"
+          set -e
+          mkdir -p workspace/unpacked workspace/project
+
+          echo "Searching repository for ZIP files..."
+          find . -type f -iname '*.zip' -not -path './.git/*'
+
+          ZIP_FILE=$(find . -type f -iname 'TaskTickAndroid_Project*.zip' -not -path './.git/*' | head -n 1)
+
           if [ -z "$ZIP_FILE" ]; then
-            echo "TaskTick project ZIP not found. Repository files:"
-            find . -maxdepth 3 -type f
+            ZIP_FILE=$(find . -type f -iname '*.zip' -not -path './.git/*' | head -n 1)
+          fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No project ZIP found in repository."
             exit 1
           fi
-          echo "Extracting: $ZIP_FILE"
-          unzip -o "$ZIP_FILE" -d source
-          ls -la source
-     
+
+          echo "Found ZIP: $ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d workspace/unpacked
+
+          INNER_ZIP=$(find workspace/unpacked -type f -iname 'TaskTickAndroid_Project*.zip' | head -n 1)
+
+          if [ -n "$INNER_ZIP" ]; then
+            echo "Found nested Android project ZIP: $INNER_ZIP"
+            unzip -o "$INNER_ZIP" -d workspace/project
+          else
+            cp -a workspace/unpacked/. workspace/project/
+          fi
+
+          SETTINGS_FILE=$(find workspace/project -type f -name 'settings.gradle' | head -n 1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle not found."
+            find workspace/project -maxdepth 6 -type f
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
       - name: Build TaskTick APK
-        run: gradle --no-daemon -p source :app:assembleDebug
+        run: |
+          gradle --no-daemon -p "$PROJECT_DIR" :app:assembleDebug
+
+      - name: Check APK
+        run: |
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+          ls -lh "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: TaskTick-debug-apk
-          path: source/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 30
